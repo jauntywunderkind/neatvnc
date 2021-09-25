@@ -255,6 +255,11 @@ static int h264_encoder__init_codec_context(struct h264_encoder* self,
 	c->gop_size = INT32_MAX; /* We'll select key frames manually */
 	c->max_b_frames = 0; /* B-frames are bad for latency */
 
+	/* open-h264 requires baseline profile, so we use constrained
+	 * baseline.
+	 */
+	c->profile = 578;
+
 	return 0;
 }
 
