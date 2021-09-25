@@ -9,7 +9,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <assert.h>
-
+#include <gbm.h>
 #include <aml.h>
 
 #include <libavcodec/avcodec.h>
@@ -61,6 +61,7 @@ struct h264_encoder {
 	struct aml_work* work;
 	struct nvnc_fb* current_fb;
 	AVPacket* current_packet;
+	bool current_frame_is_keyframe;
 };
 
 enum AVPixelFormat drm_to_av_pixel_format(uint32_t format)
@@ -81,6 +82,57 @@ enum AVPixelFormat drm_to_av_pixel_format(uint32_t format)
 	}
 
 	return AV_PIX_FMT_NONE;
+}
+
+// TODO: Maybe do this once per frame inside nvnc_fb?
+AVFrame* fb_to_avframe(struct nvnc_fb* fb)
+{
+	struct gbm_bo* bo = fb->bo;
+
+	AVBufferRef* desc_ref = av_buffer_allocz(sizeof(AVDRMFrameDescriptor));
+	if (!desc_ref)
+		return NULL;
+
+	AVDRMFrameDescriptor* desc = (AVDRMFrameDescriptor*)desc_ref->data;
+
+	AVFrame* frame = av_frame_alloc();
+	if (!frame) {
+		av_buffer_unref(&desc_ref);
+		return NULL;
+	}
+
+	int n_planes = gbm_bo_get_plane_count(bo);
+
+	desc->nb_objects = n_planes;
+
+	desc->nb_layers = 1;
+	desc->layers[0].format = gbm_bo_get_format(bo);
+	desc->layers[0].nb_planes = n_planes;
+
+	for (int i = 0; i < n_planes; ++i) {
+		uint32_t stride = gbm_bo_get_stride_for_plane(bo, i);
+
+		// TODO: Does libav clean up this fd?
+		desc->objects[i].fd = gbm_bo_get_fd_for_plane(bo, i);
+		desc->objects[i].size = stride * fb->height;
+		desc->objects[i].format_modifier = gbm_bo_get_modifier(bo);
+
+		desc->layers[0].planes[i].object_index = i;
+		desc->layers[0].planes[i].offset = gbm_bo_get_offset(bo, i);
+		desc->layers[0].planes[i].pitch = stride;
+	}
+
+	frame->opaque = fb;
+	frame->width = fb->width;
+	frame->height = fb->height;
+	frame->format = AV_PIX_FMT_DRM_PRIME;
+	frame->sample_aspect_ratio = (AVRational){1, 1};
+	frame->buf[0] = desc_ref;
+	frame->data[0] = (void*)desc;
+
+	// TODO: Set colorspace?
+
+	return frame;
 }
 
 static struct nvnc_fb* fb_queue_dequeue(struct fb_queue* queue)
@@ -226,6 +278,9 @@ static int h264_encoder__schedule_work(struct h264_encoder* self)
 	if (!self->current_fb)
 		return 0;
 
+	self->current_frame_is_keyframe = self->next_frame_should_be_keyframe;
+	self->next_frame_should_be_keyframe = false;
+
 	return aml_start(aml_get_default(), self->work);
 }
 
@@ -264,9 +319,18 @@ static void h264_encoder__do_work(void* handle)
 {
 	struct h264_encoder* self = aml_get_userdata(handle);
 
-	// TODO: Get AVFrame* from nvnc_fb
-	AVFrame* frame = av_frame_alloc();
+	AVFrame* frame = fb_to_avframe(self->current_fb);
 	assert(frame); // TODO
+
+	frame->hw_frames_ctx = av_buffer_ref(self->hw_frames_ctx);
+
+	if (self->current_frame_is_keyframe) {
+		frame->key_frame = 1;
+		frame->pict_type = AV_PICTURE_TYPE_I;
+	} else {
+		frame->key_frame = 0;
+		frame->pict_type = AV_PICTURE_TYPE_P;
+	}
 
 	AVPacket* packet = av_packet_alloc();
 	assert(packet); // TODO
@@ -281,6 +345,7 @@ static void h264_encoder__do_work(void* handle)
 	self->current_packet = packet;
 
 failure:
+	av_frame_unref(frame);
 	av_frame_free(&frame);
 }
 
