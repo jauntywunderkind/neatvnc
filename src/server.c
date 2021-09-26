@@ -444,6 +444,8 @@ static int on_init_message(struct nvnc_client* client)
 	if (fn)
 		fn(client);
 
+	open_h264_request_keyframe(&client->server->display->open_h264);
+
 	client->state = VNC_CLIENT_STATE_READY;
 	return sizeof(shared_flag);
 }
@@ -535,6 +537,8 @@ static void process_fb_update_requests(struct nvnc_client* client)
 	enum rfb_encodings encoding = choose_frame_encoding(client);
 
 	if (encoding == RFB_ENCODING_OPEN_H264) {
+		log_debug("Sending h264 update to client\n");
+
 		struct vec buffer;
 		rc = vec_init(&buffer, 4096);
 		assert(rc == 0);
@@ -544,7 +548,7 @@ static void process_fb_update_requests(struct nvnc_client* client)
 		if (rc > 0) {
 			rc = stream_write(client->net_stream, buffer.data,
 					buffer.len, NULL, NULL);
-			assert(rc == 1);
+			log_debug("Sent %zu h264 bytes to client\n", buffer.len);
 		}
 
 		vec_destroy(&buffer);
