@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019 - 2020 Andri Yngvason
+ * Copyright (c) 2019 - 2021 Andri Yngvason
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -119,3 +119,4 @@ struct nvnc {
 
 void nvnc__damage_region(struct nvnc* self,
                          const struct pixman_region16* damage);
+void nvnc__process_all_fb_update_requests(struct nvnc* self);

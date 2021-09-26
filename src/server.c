@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019 - 2020 Andri Yngvason
+ * Copyright (c) 2019 - 2021 Andri Yngvason
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -500,6 +500,7 @@ static int on_client_set_encodings(struct nvnc_client* client)
 		case RFB_ENCODING_TIGHT:
 		case RFB_ENCODING_TRLE:
 		case RFB_ENCODING_ZRLE:
+		case RFB_ENCODING_OPEN_H264:
 		case RFB_ENCODING_CURSOR:
 		case RFB_ENCODING_DESKTOPSIZE:
 		case RFB_ENCODING_JPEG_HIGHQ:
@@ -529,6 +530,26 @@ static void process_fb_update_requests(struct nvnc_client* client)
 
 	if (client->is_updating || client->n_pending_requests == 0)
 		return;
+
+	int rc;
+	enum rfb_encodings encoding = choose_frame_encoding(client);
+
+	if (encoding == RFB_ENCODING_OPEN_H264) {
+		struct vec buffer;
+		rc = vec_init(&buffer, 4096);
+		assert(rc == 0);
+
+		rc = open_h264_read(&server->display->open_h264, &buffer);
+		assert(rc >= 0);
+		if (rc > 0) {
+			rc = stream_write(client->net_stream, buffer.data,
+					buffer.len, NULL, NULL);
+			assert(rc == 1);
+		}
+
+		vec_destroy(&buffer);
+		return;
+	}
 
 	struct nvnc_fb* fb = client->server->display->buffer;
 	assert(fb);
@@ -565,9 +586,6 @@ static void process_fb_update_requests(struct nvnc_client* client)
 	client->current_fb = fb;
 	nvnc_fb_hold(fb);
 	nvnc_fb_ref(fb);
-
-	int rc;
-	enum rfb_encodings encoding = choose_frame_encoding(client);
 
 	// TODO: Check the return value
 	struct rfb_pixel_format server_fmt;
@@ -1219,10 +1237,18 @@ static void on_write_frame_done(void* userdata, enum stream_req_status status)
 	client_unref(client);
 }
 
+static bool is_open_h264_supported(struct nvnc* self)
+{
+	return self->display->is_open_h264_supported;
+}
+
 static enum rfb_encodings choose_frame_encoding(struct nvnc_client* client)
 {
 	for (size_t i = 0; i < client->n_encodings; ++i)
 		switch (client->encodings[i]) {
+		case RFB_ENCODING_OPEN_H264:
+			if (!is_open_h264_supported(client->server))
+				break;
 		case RFB_ENCODING_RAW:
 		case RFB_ENCODING_TIGHT:
 		case RFB_ENCODING_ZRLE:
@@ -1435,6 +1461,13 @@ pixfmt_failure:
 	return -1;
 }
 
+void nvnc__process_all_fb_update_requests(struct nvnc* self)
+{
+	struct nvnc_client* client;
+	LIST_FOREACH(client, &self->clients, link)
+		process_fb_update_requests(client);
+}
+
 void nvnc__damage_region(struct nvnc* self, const struct pixman_region16* damage)
 {
 	struct nvnc_client* client;
@@ -1444,8 +1477,7 @@ void nvnc__damage_region(struct nvnc* self, const struct pixman_region16* damage
 			pixman_region_union(&client->damage, &client->damage,
 					    (struct pixman_region16*)damage);
 
-	LIST_FOREACH(client, &self->clients, link)
-		process_fb_update_requests(client);
+	nvnc__process_all_fb_update_requests(self);
 }
 
 EXPORT

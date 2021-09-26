@@ -20,6 +20,7 @@
 #include "fb.h"
 #include "resampler.h"
 #include "transform-util.h"
+#include "open-h264.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -45,6 +46,13 @@ static void nvnc_display__on_resampler_done(struct nvnc_fb* fb,
 	nvnc__damage_region(self->server, damage);
 }
 
+static void nvnc_display__on_h264_ready(void* userdata)
+{
+	struct nvnc_display* self = userdata;
+
+	nvnc__process_all_fb_update_requests(self->server);
+}
+
 EXPORT
 struct nvnc_display* nvnc_display_new(uint16_t x_pos, uint16_t y_pos)
 {
@@ -59,12 +67,20 @@ struct nvnc_display* nvnc_display_new(uint16_t x_pos, uint16_t y_pos)
 	if (damage_refinery_init(&self->damage_refinery, 0, 0) < 0)
 		goto refinery_failure;
 
+	self->open_h264.on_ready = nvnc_display__on_h264_ready;
+	self->open_h264.userdata = self;
+
+	if (open_h264_init(&self->open_h264) < 0)
+		goto open_h264_failure;
+
 	self->ref = 1;
 	self->x_pos = x_pos;
 	self->y_pos = y_pos;
 
 	return self;
 
+open_h264_failure:
+	damage_refinery_destroy(&self->damage_refinery);
 refinery_failure:
 	resampler_destroy(self->resampler);
 resampler_failure:
@@ -79,6 +95,7 @@ static void nvnc__display_free(struct nvnc_display* self)
 		nvnc_fb_release(self->buffer);
 		nvnc_fb_unref(self->buffer);
 	}
+	open_h264_destroy(&self->open_h264);
 	damage_refinery_destroy(&self->damage_refinery);
 	resampler_destroy(self->resampler);
 	free(self);
@@ -107,8 +124,21 @@ EXPORT
 void nvnc_display_feed_buffer(struct nvnc_display* self, struct nvnc_fb* fb,
 		struct pixman_region16* damage)
 {
+	if (fb->type == NVNC_FB_GBM_BO && fb->transform == NVNC_TRANSFORM_NORMAL) {
+		self->is_open_h264_supported = true;
+
+		// TODO: Don't feed encoder unless there are clients connected
+		// that support open-h264.
+		// TODO: Request keyframe when a new client that supports
+		// open-h264 connects.
+		open_h264_feed_frame(&self->open_h264, fb);
+	} else {
+		self->is_open_h264_supported = false;
+	}
+
 	damage_refinery_resize(&self->damage_refinery, fb->width, fb->height);
 
+	// TODO: Disable damage refinery while no non-h264 client is connected
 	// TODO: Run the refinery in a worker thread?
 	struct pixman_region16 refined_damage;
 	pixman_region_init(&refined_damage);

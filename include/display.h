@@ -18,9 +18,11 @@
 
 #include "neatvnc.h"
 #include "damage-refinery.h"
+#include "open-h264.h"
+#include "pixels.h"
 
 #include <stdint.h>
-#include <pixels.h>
+#include <stdbool.h>
 
 struct nvnc;
 struct nvnc_fb;
@@ -33,4 +35,7 @@ struct nvnc_display {
 	struct nvnc_fb* buffer;
 	struct resampler* resampler;
 	struct damage_refinery damage_refinery;
+
+	struct open_h264 open_h264;
+	bool is_open_h264_supported;
 };
