@@ -158,3 +158,9 @@ int open_h264_read(struct open_h264* self, struct vec* buffer)
 
 	return 1;
 }
+
+void open_h264_request_keyframe(struct open_h264* self)
+{
+	vec_clear(&self->pending);
+	h264_encoder_request_keyframe(self->encoder);
+}
