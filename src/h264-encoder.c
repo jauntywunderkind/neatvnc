@@ -84,25 +84,25 @@ static enum AVPixelFormat drm_to_av_pixel_format(uint32_t format)
 	return AV_PIX_FMT_NONE;
 }
 
+static void hw_frame_desc_free(void* opaque, uint8_t* data)
+{
+	struct AVDRMFrameDescriptor* desc = (void*)data;
+	assert(desc);
+
+	for (int i = 0; i < desc->nb_objects; ++i)
+		close(desc->objects[i].fd);
+
+	free(desc);
+}
+
 // TODO: Maybe do this once per frame inside nvnc_fb?
 static AVFrame* fb_to_avframe(struct nvnc_fb* fb)
 {
 	struct gbm_bo* bo = fb->bo;
 
-	AVBufferRef* desc_ref = av_buffer_allocz(sizeof(AVDRMFrameDescriptor));
-	if (!desc_ref)
-		return NULL;
-
-	AVDRMFrameDescriptor* desc = (AVDRMFrameDescriptor*)desc_ref->data;
-
-	AVFrame* frame = av_frame_alloc();
-	if (!frame) {
-		av_buffer_unref(&desc_ref);
-		return NULL;
-	}
-
 	int n_planes = gbm_bo_get_plane_count(bo);
 
+	AVDRMFrameDescriptor* desc = calloc(1, sizeof(*desc));
 	desc->nb_objects = n_planes;
 
 	desc->nb_layers = 1;
@@ -112,7 +112,6 @@ static AVFrame* fb_to_avframe(struct nvnc_fb* fb)
 	for (int i = 0; i < n_planes; ++i) {
 		uint32_t stride = gbm_bo_get_stride_for_plane(bo, i);
 
-		// TODO: Does libav clean up this fd?
 		desc->objects[i].fd = gbm_bo_get_fd_for_plane(bo, i);
 		desc->objects[i].size = stride * fb->height;
 		desc->objects[i].format_modifier = gbm_bo_get_modifier(bo);
@@ -122,13 +121,28 @@ static AVFrame* fb_to_avframe(struct nvnc_fb* fb)
 		desc->layers[0].planes[i].pitch = stride;
 	}
 
+	AVFrame* frame = av_frame_alloc();
+	if (!frame) {
+		hw_frame_desc_free(NULL, (void*)desc);
+		return NULL;
+	}
+
 	frame->opaque = fb;
 	frame->width = fb->width;
 	frame->height = fb->height;
 	frame->format = AV_PIX_FMT_DRM_PRIME;
 	frame->sample_aspect_ratio = (AVRational){1, 1};
+
+	AVBufferRef* desc_ref = av_buffer_create((void*)desc, sizeof(*desc),
+			hw_frame_desc_free, NULL, 0);
+	if (!desc_ref) {
+		hw_frame_desc_free(NULL, (void*)desc);
+		av_frame_free(&frame);
+		return NULL;
+	}
+
 	frame->buf[0] = desc_ref;
-	frame->data[0] = (void*)desc;
+	frame->data[0] = (void*)desc_ref->data;
 
 	// TODO: Set colorspace?
 
@@ -344,7 +358,7 @@ static void h264_encoder__do_work(void* handle)
 	assert(packet); // TODO
 
 	int rc = h264_encoder__encode(self, frame, packet);
-	if (rc == 0) {
+	if (rc != 0) {
 		// TODO: log failure
 		av_packet_free(&packet);
 		goto failure;
