@@ -48,3 +48,5 @@ void open_h264_destroy(struct open_h264*);
 int open_h264_feed_frame(struct open_h264*, struct nvnc_fb*);
 
 int open_h264_read(struct open_h264*, struct vec* buffer);
+
+void open_h264_request_keyframe(struct open_h264*);
