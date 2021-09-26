@@ -186,7 +186,7 @@ static int h264_encoder__init_filters(struct h264_encoder* self)
 		goto failure;
 
 	rc = avfilter_graph_create_filter(&self->filter_out,
-			avfilter_get_by_name("buffersink"), "out", options,
+			avfilter_get_by_name("buffersink"), "out", NULL,
 			NULL, self->filter_graph);
 	if (rc != 0)
 		goto failure;
@@ -195,7 +195,7 @@ static int h264_encoder__init_filters(struct h264_encoder* self)
 	if (!inputs)
 		goto failure;
 
-	inputs->name = "in";
+	inputs->name = av_strdup("in");
 	inputs->filter_ctx = self->filter_in;
 	inputs->pad_idx = 0;
 	inputs->next = NULL;
@@ -206,7 +206,7 @@ static int h264_encoder__init_filters(struct h264_encoder* self)
 		goto failure;
 	}
 
-	outputs->name = "out";
+	outputs->name = av_strdup("out");
 	outputs->filter_ctx = self->filter_out;
 	outputs->pad_idx = 0;
 	outputs->next = NULL;
@@ -214,10 +214,6 @@ static int h264_encoder__init_filters(struct h264_encoder* self)
 	rc = avfilter_graph_parse(self->filter_graph,
 			"hwmap,scale_vaapi=format=nv12:mode=fast",
 			outputs, inputs, NULL);
-
-	avfilter_inout_free(&outputs);
-	avfilter_inout_free(&inputs);
-
 	if (rc != 0)
 		goto failure;
 
@@ -265,13 +261,20 @@ static int h264_encoder__init_codec_context(struct h264_encoder* self,
 
 static int h264_encoder__init_hw_frames_context(struct h264_encoder* self)
 {
+	self->hw_frames_ctx = av_hwframe_ctx_alloc(self->hw_device_ctx);
+	if (!self->hw_frames_ctx)
+		return -1;
+
 	AVHWFramesContext* c = (AVHWFramesContext*)self->hw_frames_ctx->data;
 	c->format = AV_PIX_FMT_VAAPI;
 	c->sw_format = AV_PIX_FMT_NV12;
 	c->width = self->width;
 	c->height = self->height;
 	
-	return av_hwframe_ctx_init(self->hw_frames_ctx);
+	if (av_hwframe_ctx_init(self->hw_frames_ctx) < 0)
+		av_buffer_unref(&self->hw_frames_ctx);
+
+	return 0;
 }
 
 static int h264_encoder__schedule_work(struct h264_encoder* self)
