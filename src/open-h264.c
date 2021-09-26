@@ -117,13 +117,13 @@ static int open_h264_resize(struct open_h264* self, struct nvnc_fb* fb)
 
 int open_h264_feed_frame(struct open_h264* self, struct nvnc_fb* fb)
 {
-	assert(self->width && self->height && self->on_ready);
-
 	if (fb->width != self->width || fb->height != self->height ||
 			fb->fourcc_format != self->format) {
 		if (open_h264_resize(self, fb) < 0)
 			return -1;
 	}
+
+	assert(self->width && self->height && self->on_ready);
 
 	// TODO: encoder_feed should return an error code
 	h264_encoder_feed(self->encoder, fb);
