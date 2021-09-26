@@ -62,6 +62,13 @@ static void open_h264_handle_packet(const void* data, size_t size,
 {
 	struct open_h264* self = userdata;
 
+	// Let's try to not blow things up when nothing is reading the pending
+	// data.
+	// TODO: Stop encoding when nothing is reading and leave this as an
+	// assert
+	if (self->pending.len > 10000000)
+		return;
+
 	vec_append(&self->pending, data, size);
 	self->on_ready(self->userdata);
 }
