@@ -20,7 +20,7 @@
 #include <libavfilter/buffersink.h>
 #include <libavfilter/buffersrc.h>
 
-#include <drm_fourcc.h>
+#include <libdrm/drm_fourcc.h>
 
 struct h264_encoder;
 
@@ -64,7 +64,7 @@ struct h264_encoder {
 	bool current_frame_is_keyframe;
 };
 
-enum AVPixelFormat drm_to_av_pixel_format(uint32_t format)
+static enum AVPixelFormat drm_to_av_pixel_format(uint32_t format)
 {
 	switch (format) {
 	case DRM_FORMAT_XRGB8888:
@@ -85,7 +85,7 @@ enum AVPixelFormat drm_to_av_pixel_format(uint32_t format)
 }
 
 // TODO: Maybe do this once per frame inside nvnc_fb?
-AVFrame* fb_to_avframe(struct nvnc_fb* fb)
+static AVFrame* fb_to_avframe(struct nvnc_fb* fb)
 {
 	struct gbm_bo* bo = fb->bo;
 
